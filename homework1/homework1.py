@@ -12,7 +12,7 @@ def server():
     print( 'Listening at {}'.format(sock.getsockname()) )
 
     while True:
-        receiveData, address = sock.recvfrom(MAX_BYTES)
+        receiveData, address = sock.recvfrom( MAX_BYTES )
         print( 'Reveive data: {}'.format( receiveData ) )
         if isDHCPDISCOVERmsg( receiveData[240:len(receiveData)] ):
             print( 'Is \"DHCP Discover\"!!!' )
@@ -20,11 +20,12 @@ def server():
             hostIP = socket.inet_aton( socket.gethostbyname( socket.gethostname() ) )
             sendData = makeDHCPOFFERmsg( receiveData[4:8], requestIP, receiveData[28:44], hostIP )
             sock.sendto( sendData, ( '255.255.255.255', 68 ) )
-        #elif isDHCPREQUESTmsg():
-        #    print( 'Is\"DHCP Request\"!!!' )
-        #    hostIP = socket.inet_aton( socket.gethostbyname( socket.gethostname() ) )
-        #    sendData = makeDHCPACKmsg()
-        #    sock.sendto( sendData, ( '255.255.255.255', 68 ) )
+        elif isDHCPREQUESTmsg( receiveData[240:len(receiveData)] ):
+            print( 'Is\"DHCP Request\"!!!' )
+            dhcpServerIP = getDHCPServerIP( receiveData[240:len(receiveData)] )
+            requestIP = getRequestIP( receiveData[240:len(receiveData)] )
+            sendData = makeDHCPACKmsg( receiveData[4:8], requestIP, receiveData[28:44], dhcpServerIP )
+            sock.sendto( sendData, ( '255.255.255.255', 68 ) )
             
          
 
@@ -35,6 +36,12 @@ def client():
     sendData = makeDHCPDISCOVERmsg()
     print( 'Send data: {}'.format( sendData ) )
     sock.sendto( sendData, ( '255.255.255.255', 67 ) )
+    receiveData, address = sock.recvfrom( MAX_BYTES )
+    if isDHCPOFFERmsg( receiveData[240:len(receiveData)] ):
+        print( 'Is \"DHCP Offer\"!!!' )
+        dhcpServerIP = getDHCPServerIP( receiveData[240:len(receiveData)] )
+        sendData = makeDHCPREQUESTmsg( receiveData[4:8], dhcpServerIP )
+        sock.sendto( sendData, ( '255.255.255.255', 67 ) )
 
 # ========================================================
 
@@ -73,20 +80,88 @@ def makeDHCPOFFERmsg( xid, requestIP, chaddr, hostIP ):
     data = data + bytes( [1, 4, 255, 255, 255, 0] ) #subnet mask
     data = data + bytes( [51,4] ) + hostIP # router
     data = data + bytes( [51, 4] ) + (86400).to_bytes( 4, 'big' ) # IP lease time
-    data = data + bytes( [51,4] ) + hostIP
+    data = data + bytes( [54,4] ) + hostIP
     data = data + bytes( [0xff] ) # end option
 
     return data
     
 # ========================================================
 
+def makeDHCPREQUESTmsg( xid, dhcpServerIP):
+    data = bytes([0x01, 0x01, 0x06, 0x00])
+    data = data + xid
+    data = data + bytes( [0x00, 0x00, 0x00, 0x00] ) # SECS FLAGS
+    data = data + bytes( [0x00, 0x00, 0x00, 0x00] ) # CIADDR
+    data = data + bytes( [0x00, 0x00, 0x00, 0x00] ) # YIADDR
+    data = data + bytes( [0x00, 0x00, 0x00, 0x00] ) # SIADDR
+    data = data + bytes( [0x00, 0x00, 0x00, 0x00] ) # GIADDR
+    data = data + uuid.getnode().to_bytes( 6, 'big') # CHADDR
+    data = data + bytes( [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] )
+    data = data + bytes( 192 ) # BOOTP legacy
+    data = data + bytes( [0x63, 0x82, 0x53, 0x63]) # Magic Cookie
+    data = data + bytes( [53, 1, 3] ) # DHCP Discover
+    data = data + bytes( [50, 4, 192, 168, 1, 100] ) #IP requested
+    data = data + bytes( [54, 4] ) + dhcpServerIP # dhcp server IP
+    data = data + bytes( [0xff] ) # end option
+
+    return data
+    
+# ========================================================
+
+def makeDHCPACKmsg( xid, requestIP, chaddr, dhcpServerIP ):
+    data = bytes([0x02, 0x01, 0x06, 0x00])
+    data = data + xid
+    data = data + bytes( [0x00, 0x00, 0x00, 0x00] ) # SECS FLAGS
+    data = data + bytes( [0x00, 0x00, 0x00, 0x00] ) # CIADDR
+    data = data + requestIP # YIADDR
+    data = data + bytes( [0x00, 0x00, 0x00, 0x00] ) # SIADDR
+    data = data + bytes( [0x00, 0x00, 0x00, 0x00] ) # GIADDR
+    data = data + chaddr # CHADDR
+    data = data + bytes( 192 ) # BOOTP legacy
+    data = data + bytes( [0x63, 0x82, 0x53, 0x63]) # Magic Cookie
+    data = data + bytes( [53, 1, 5] ) # DHCP Offer
+    data = data + bytes( [1, 4, 255, 255, 255, 0] ) #subnet mask
+    data = data + bytes( [51,4] ) + dhcpServerIP # router
+    data = data + bytes( [51, 4] ) + (86400).to_bytes( 4, 'big' ) # IP lease time
+    data = data + bytes( [54,4] ) + dhcpServerIP
+    data = data + bytes( [0xff] ) # end option
+
+    return data
+    
+# ========================================================
 def isDHCPDISCOVERmsg( dhcpoptions ):
     index = 0
     optLen = len(dhcpoptions)
     while index < optLen and dhcpoptions[index] != 0xff:
-        print( index )
-        print( dhcpoptions[index] )
         if dhcpoptions[index] == 53 and dhcpoptions[index+2] == 1:
+            return True
+        else:
+            index = index + 2 + dhcpoptions[index+1]
+
+    return False
+
+# ========================================================
+
+def isDHCPOFFERmsg( dhcpoptions ):
+    index = 0
+    optLen = len(dhcpoptions)
+    while index < optLen and dhcpoptions[index] != 0xff:
+        print( dhcpoptions[index] )
+        print( dhcpoptions[index+2] )
+        if dhcpoptions[index] == 53 and dhcpoptions[index+2] == 2:
+            return True
+        else:
+            index = index + 2 + dhcpoptions[index+1]
+
+    return False
+
+# ========================================================
+
+def isDHCPREQUESTmsg( dhcpoptions ):
+    index = 0
+    optLen = len(dhcpoptions)
+    while index < optLen and dhcpoptions[index] != 0xff:
+        if dhcpoptions[index] == 53 and dhcpoptions[index+2] == 3:
             return True
         else:
             index = index + 2 + dhcpoptions[index+1]
@@ -99,9 +174,20 @@ def getRequestIP( dhcpoptions ):
     index = 0
     optLen = len(dhcpoptions)
     while index < optLen and dhcpoptions[index] != 0xff:
-        print( index )
-        print( dhcpoptions[index] )
         if dhcpoptions[index] == 50 and dhcpoptions[index+1] == 4:
+            return dhcpoptions[index+2:index+6]
+        else:
+            index = index + 2 + dhcpoptions[index+1]
+
+    return False
+
+# ========================================================
+
+def getDHCPServerIP( dhcpoptions ):
+    index = 0
+    optLen = len(dhcpoptions)
+    while index < optLen and dhcpoptions[index] != 0xff:
+        if dhcpoptions[index] == 54 and dhcpoptions[index+1] == 4:
             return dhcpoptions[index+2:index+6]
         else:
             index = index + 2 + dhcpoptions[index+1]
