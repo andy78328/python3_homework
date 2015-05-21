@@ -6,15 +6,16 @@ class User:
     self.password = password
     self.status = "logout"
     self.messageQueue = queue.Queue()
+    self.target = "server"
 
   def login( self, transport ):
     self.transport = transport
     self.status = "login"
+    self.target = "server"
 
   def logout( self ):
     self.status = "logoout"
     
-
 # ==============================================
 
 
@@ -62,7 +63,24 @@ class ChatServer(asyncio.Protocol):
         self.transport.close()
 
     else: # 這邊是處理已經登入的連線狀況
-      if dataTokens[0] == 'logout': # 使用者輸入logout指令,進行登出並斷開連線
+      if self.currentUser.target != 'server':
+      # 是否正和哪個指定目標開啟通話
+        desUser = ChatServer.users[self.currentUser.target]
+        message = data.decode()
+        if dataTokens[0] == 'exit' and len( dataTokens ) == 1:
+          sendData = 'Exit conversation with {}'.format( self.currentUser.target )
+          self.currentUser.transport.write( sendData.encode() )
+          self.currentUser.target = 'server'
+        elif desUser.status == 'login':
+          sendData = '{} says :{}'.format( self.currentUser.username, message )
+          desUser.transport.write( sendData.encode() )
+        else:
+          sendData = '{} is offline, exit conversation.'.format( self.currentUser.target )
+          self.transport.write( sendData.encode() )
+          self.currentUser.target = 'server'
+          
+          
+      elif dataTokens[0] == 'logout': # 使用者輸入logout指令,進行登出並斷開連線
         print( 'User {} loout'.format( self.currentUser.username ) )
         # 送出成功登出的訊息,隨即斷開連線
         sendData = 'Logout success!'
@@ -116,13 +134,27 @@ class ChatServer(asyncio.Protocol):
         allUsers = list( ChatServer.users.keys() )
         for name in allUsers:
           ChatServer.send_to_user( ChatServer.users[name], sendData )
+      elif dataTokens[0] == 'talk' and len(dataTokens) == 2:
+      # 與指定目標開啟一個conversation
+        destUser = dataTokens[1]
+        if destUser in list( ChatServer.users.keys() ): # 確定真有此人
+          if( ChatServer.users[destUser].status == 'login' ):
+            sendData = 'Talking to {}. input\'exit\' to end this conversation'.format(destUser)
+            self.currentUser.target = destUser
+          else:
+            sendData = '{}: offline, can not start conversation'.format(destUser)
+        else:
+          sendData = '{} doesn\'t exist.'.format( destUser )
+        self.transport.write( sendData.encode() )
+        
       else:
       # 所有指令接部不合格式,回傳正確格式
-        sendData = 'Invalid instruction.\n'
+        sendData = 'Invalid instruction:\n'
         sendData = sendData + '>listuser\n'
         sendData = sendData + '>checkname [username]\n'
         sendData = sendData + '>send [username] [message]\n'
         sendData = sendData + '>broadcast [message]\n'
+        sendData = sendData + '>talk [username]\n'
         sendData = sendData + '>logout'
         self.transport.write( sendData.encode() )
 
