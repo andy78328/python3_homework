@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<meta charset="UTF-8">
+<html>
+  <head>
+    <title>{% block title %}{% endblock %}</title>
+    <link rel="stylesheet" type="text/css" herf="/static/style.css">
+  </head>
+  <body>
+    <h1>{{ self.title() }}</h1>
+    {% block body %}{% endblock %}
+  </body>
+</html>
